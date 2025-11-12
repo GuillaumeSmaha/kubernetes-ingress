@@ -16,6 +16,7 @@ package ingress
 
 import (
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/haproxytech/kubernetes-ingress/pkg/annotations"
@@ -148,7 +149,16 @@ func (i *Ingress) handlePath(k store.K8s, h haproxy.HAProxy, host string, path *
 
 	routeACLAnn := a.String("route-acl", svc.GetResource().Annotations)
 	if routeACLAnn == "" {
-		err = route.AddHostPathRoute(ingRoute, h.Maps)
+		protoH1H2 := false
+		if v, ok := i.resource.Annotations["server-proto"]; ok && strings.Contains(v, "h1") && strings.Contains(v, "h2") {
+			protoH1H2 = true
+		}
+		v, ok := i.resource.Annotations["server-proto"]
+		if protoH1H2 && ok && v == "h2" {
+			err = route.AddHostPathRouteH2(ingRoute, h.Maps)
+		} else {
+			err = route.AddHostPathRoute(ingRoute, h.Maps)
+		}
 	} else {
 		err = route.AddCustomRoute(ingRoute, routeACLAnn, h)
 	}

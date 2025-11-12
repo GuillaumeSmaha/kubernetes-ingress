@@ -55,6 +55,7 @@ func New(osArgs utils.OSArgs, env env.Env, cfgFile []byte, p process.Process, cl
 		route.PATH_EXACT,
 		route.PATH_PREFIX_EXACT,
 		route.PATH_PREFIX,
+		route.PATH_PREFIX_H2,
 	}
 	if h.Maps, err = maps.New(env.MapsDir, persistentMaps); err != nil {
 		err = fmt.Errorf("failed to initialize haproxy maps: %w", err)

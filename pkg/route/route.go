@@ -33,11 +33,13 @@ const (
 	FrontendHTTP  = "http"
 	FrontendHTTPS = "https"
 	// Routing Maps
-	SNI               maps.Name = "sni"
-	HOST              maps.Name = "host"
-	PATH_EXACT        maps.Name = "path-exact"
-	PATH_PREFIX_EXACT maps.Name = "path-prefix-exact"
-	PATH_PREFIX       maps.Name = "path-prefix"
+	SNI                  maps.Name = "sni"
+	HOST                 maps.Name = "host"
+	PATH_EXACT           maps.Name = "path-exact"
+	PATH_PREFIX_EXACT    maps.Name = "path-prefix-exact"
+	PATH_PREFIX          maps.Name = "path-prefix"
+	PATH_PREFIX_EXACT_H2 maps.Name = "path-prefix-exact-h2"
+	PATH_PREFIX_H2       maps.Name = "path-prefix-h2"
 )
 
 var (
@@ -94,6 +96,53 @@ func AddHostPathRoute(route Route, mapFiles maps.Maps) error {
 		path = strings.TrimSuffix(path, "/")
 		mapFiles.MapAppend(PATH_PREFIX_EXACT, route.Host+path+"\t\t\t"+value)
 		mapFiles.MapAppend(PATH_PREFIX, route.Host+path+"\t\t\t"+value)
+	default:
+		return fmt.Errorf("unknown path type '%s' with backend '%s'", route.Path.PathTypeMatch, route.BackendName)
+	}
+	return nil
+}
+
+// AddHostPathRoute adds Host/Path ingress route to haproxy Map files used for backend switching.
+func AddHostPathRouteH2(route Route, mapFiles maps.Maps) error {
+	if route.BackendName == "" {
+		return errors.New("backendName missing")
+	}
+	// Wildcard host
+	if route.Host != "" && route.Host[0] == '*' {
+		route.Host = route.Host[1:]
+	}
+	value := route.BackendName
+	for _, id := range route.HAProxyRules {
+		value += "." + string(id)
+	}
+	// SSLPassthrough
+	if route.SSLPassthrough {
+		if route.Host == "" {
+			return fmt.Errorf("empty SNI for backend %s,", route.BackendName)
+		}
+		mapFiles.MapAppend(SNI, route.Host+"\t\t\t"+value)
+	}
+	// HTTP
+	if route.Host != "" {
+		mapFiles.MapAppend(HOST, route.Host+"\t\t\t"+route.Host)
+	} else if route.Path.Path == "" {
+		return fmt.Errorf("neither Host nor Path are provided for backend %v,", route.BackendName)
+	}
+
+	path := route.Path.Path
+	switch {
+	case route.Path.PathTypeMatch == store.PATH_TYPE_EXACT:
+		mapFiles.MapAppend(PATH_EXACT, route.Host+path+"\t\t\t"+value)
+	case path == "" || path == "/":
+		mapFiles.MapAppend(PATH_PREFIX_H2, route.Host+"/"+"\t\t\t"+value)
+	case route.Path.PathTypeMatch == store.PATH_TYPE_PREFIX:
+		path = strings.TrimSuffix(path, "/")
+		mapFiles.MapAppend(PATH_PREFIX_EXACT_H2, route.Host+path+"\t\t\t"+value)
+		mapFiles.MapAppend(PATH_PREFIX_H2, route.Host+path+"/"+"\t\t\t"+value)
+	case route.Path.PathTypeMatch == store.PATH_TYPE_IMPLEMENTATION_SPECIFIC:
+		path = strings.TrimSuffix(path, "/")
+		mapFiles.MapAppend(PATH_PREFIX_EXACT_H2, route.Host+path+"\t\t\t"+value)
+		mapFiles.MapAppend(PATH_PREFIX_H2, route.Host+path+"\t\t\t"+value)
 	default:
 		return fmt.Errorf("unknown path type '%s' with backend '%s'", route.Path.PathTypeMatch, route.BackendName)
 	}

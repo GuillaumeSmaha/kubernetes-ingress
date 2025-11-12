@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	"github.com/go-test/deep"
+	"github.com/tiendc/go-deepcopy"
 
 	maps0 "maps"
 
@@ -321,9 +322,27 @@ func (c *HAProxyController) setupHAProxyRules() error {
 				CondTest:   "!{ var(txn.host_match) -m found }",
 			}, false),
 			c.haproxy.AddRule(frontend, rules.ReqSetVar{
+				Name:       "is_h2c",
+				Scope:      "txn",
+				Expression: "str(true)",
+				CondTest:   "{ req.hdr(Content-Type) -m sub application/grpc }",
+			}, false),
+			c.haproxy.AddRule(frontend, rules.ReqSetVar{
 				Name:       "path_match",
 				Scope:      "txn",
 				Expression: fmt.Sprintf("var(txn.host_match),concat(,txn.path,),map(%s)", maps.GetPath(route.PATH_EXACT)),
+			}, false),
+			c.haproxy.AddRule(frontend, rules.ReqSetVar{
+				Name:       "path_match",
+				Scope:      "txn",
+				Expression: fmt.Sprintf("var(txn.host_match),concat(,txn.path,),map(%s)", maps.GetPath(route.PATH_PREFIX_EXACT_H2)),
+				CondTest:   "{ var(txn.is_h2c) -m str true } !{ var(txn.path_match) -m found }",
+			}, false),
+			c.haproxy.AddRule(frontend, rules.ReqSetVar{
+				Name:       "path_match",
+				Scope:      "txn",
+				Expression: fmt.Sprintf("var(txn.host_match),concat(,txn.path,),map_beg(%s)", maps.GetPath(route.PATH_PREFIX_H2)),
+				CondTest:   "{ var(txn.is_h2c) -m str true } !{ var(txn.path_match) -m found }",
 			}, false),
 			c.haproxy.AddRule(frontend, rules.ReqSetVar{
 				Name:       "path_match",
@@ -358,6 +377,13 @@ func (c *HAProxyController) SetGatewayAPIInstalled(gatewayAPIInstalled bool) {
 }
 
 func (c *HAProxyController) manageIngress(ing *store.Ingress) {
+	protoH1H2 := false
+	if v, ok := ing.Annotations["server-proto"]; ok && strings.Contains(v, "h1") && strings.Contains(v, "h2") {
+		ing.Annotations["server-proto-h1-h2"] = "true"
+		delete(ing.Annotations, "server-proto")
+		protoH1H2 = true
+	}
+
 	i := ingress.New(ing, c.osArgs.IngressClass, c.osArgs.EmptyIngressClass, c.annotations)
 	if !i.Supported(c.store, c.annotations) {
 		logger.Debugf("ingress '%s/%s' ignored: no matching", ing.Namespace, ing.Name)
@@ -366,6 +392,25 @@ func (c *HAProxyController) manageIngress(ing *store.Ingress) {
 	}
 	if ing.Status == store.ADDED || ing.ClassUpdated {
 		c.updateStatusManager.AddIngress(i)
+	}
+
+	if protoH1H2 {
+		ingH2 := store.Ingress{}
+		deepcopy.Copy(&ingH2, ing)
+		ingH2.Name += "_h2"
+		if ingH2.Annotations == nil {
+			ingH2.Annotations = map[string]string{}
+		}
+		ingH2.Annotations["server-proto"] = "h2"
+		iH2 := ingress.New(&ingH2, c.osArgs.IngressClass, c.osArgs.EmptyIngressClass, c.annotations)
+		if !iH2.Supported(c.store, c.annotations) {
+			logger.Debugf("ingress '%s/%s' (H2) ignored: no matching", ing.Namespace, ing.Name)
+		} else {
+			iH2.Update(c.store, c.haproxy, c.annotations)
+		}
+		if ing.Status == store.ADDED || ing.ClassUpdated {
+			c.updateStatusManager.AddIngress(iH2)
+		}
 	}
 }
 

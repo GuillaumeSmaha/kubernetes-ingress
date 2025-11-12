@@ -104,7 +104,16 @@ func (i *Ingress) handlePath(k store.K8s, h haproxy.HAProxy, host string, path *
 
 	routeACLAnn := a.String("route-acl", svc.GetResource().Annotations)
 	if routeACLAnn == "" {
-		err = route.AddHostPathRoute(ingRoute, h.Maps)
+		protoH1H2 := false
+		if v, ok := i.resource.Annotations["server-proto-h1-h2"]; ok && v == "true" {
+			protoH1H2 = true
+		}
+		v, ok := i.resource.Annotations["server-proto"]
+		if protoH1H2 && ok && v == "h2" {
+			err = route.AddHostPathRouteH2(ingRoute, h.Maps)
+		} else {
+			err = route.AddHostPathRoute(ingRoute, h.Maps)
+		}
 	} else {
 		err = route.AddCustomRoute(ingRoute, routeACLAnn, h)
 	}
